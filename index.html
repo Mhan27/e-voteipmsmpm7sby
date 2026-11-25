@@ -176,6 +176,15 @@ table.simple tr:last-child td{border-bottom:none;}
 .switch::after{content:'';position:absolute;top:2.5px;left:2.5px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.3);}
 .switch.on::after{left:21.5px;}
 
+.thumb{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:13px;overflow:hidden;flex-shrink:0;}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+.thumb.big{width:76px;height:76px;border-radius:16px;font-size:22px;}
+.thumb.zoomable{cursor:zoom-in;box-shadow:0 0 0 2px var(--line);}
+.lightbox{position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;}
+.lightbox .lb-inner{text-align:center;}
+.lightbox img{max-width:min(86vw,440px);max-height:68vh;border-radius:22px;background:#fff;display:block;margin:0 auto;}
+.lightbox .lb-name{color:#fff;font-weight:700;font-size:17px;margin-top:14px;}
+.lightbox .lb-hint{color:#d6d6d6;font-size:12px;margin-top:4px;}
 #print-report-root{display:none;}
 @media print{
   body.printing-report > *:not(#print-report-root){display:none !important;}
@@ -195,7 +204,7 @@ table.simple tr:last-child td{border-bottom:none;}
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, getDocs, collection, query, orderBy, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, getDocs, collection, query, orderBy, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 /* =========================================================
@@ -298,6 +307,63 @@ async function submitVote(token, positionVotes){
 async function loadAllVotes(){ // admin only
   const snap = await getDocs(collection(db, 'votes'));
   return snap.docs.map(d => ({ token: d.id, ...d.data() }));
+}
+
+// ---- Foto calon (disimpan di Firestore: config/photo_{idCalon}, otomatis dikecilkan)
+const photoCache = {};
+async function loadPhoto(id){
+  if(id in photoCache) return photoCache[id];
+  try{
+    const snap = await getDoc(doc(db, 'config', 'photo_' + id));
+    photoCache[id] = snap.exists() ? snap.data().data : null;
+  }catch(e){ console.error('loadPhoto', e); photoCache[id] = null; }
+  return photoCache[id];
+}
+async function loadPhotos(ids){ await Promise.all(ids.map(loadPhoto)); }
+async function savePhoto(id, dataUrl){
+  await setDoc(doc(db, 'config', 'photo_' + id), { data: dataUrl });
+  photoCache[id] = dataUrl;
+}
+async function deletePhoto(id){
+  try{ await deleteDoc(doc(db, 'config', 'photo_' + id)); }catch(e){ console.error('deletePhoto', e); }
+  photoCache[id] = null;
+}
+function resizeImage(file, size){
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, size, size);
+      const side = Math.min(img.width, img.height);
+      const sx = (img.width - side) / 2;
+      const sy = (img.height - side) * 0.25; // condong ke atas agar wajah tidak terpotong
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.8));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Gambar tidak dapat dibaca')); };
+    img.src = url;
+  });
+}
+function openLightbox(src, name){
+  const o = document.createElement('div');
+  o.className = 'lightbox';
+  o.innerHTML = `<div class="lb-inner"><img src="${src}" alt=""><div class="lb-name">${escapeHtml(name)}</div><div class="lb-hint">Ketuk di mana saja untuk menutup</div></div>`;
+  o.onclick = () => o.remove();
+  document.body.appendChild(o);
+}
+async function hydrateThumbs(root){
+  const els = [...root.querySelectorAll('[data-thumb]')];
+  await loadPhotos([...new Set(els.map(e => e.dataset.thumb))]);
+  els.forEach(el => {
+    const d = photoCache[el.dataset.thumb];
+    if(d) el.innerHTML = `<img src="${d}" alt="">`;
+    const del = root.querySelector(`[data-action="del-photo"][data-cand="${el.dataset.thumb}"]`);
+    if(del) del.style.display = d ? '' : 'none';
+  });
 }
 
 function genToken(existing){
@@ -557,7 +623,7 @@ async function renderAdmin(app, route){
 function renderAdminSetup(main, cfg){
   main.innerHTML = `
     <h2 class="section-title">Setup Pemilihan</h2>
-    <p class="section-desc">Tambahkan posisi/jabatan yang dipilih beserta calonnya. Untuk posisi seperti formatur, atur jumlah calon yang wajib dipilih peserta (mis. 1, 3, 5, 7 ...). Suara tidak dapat dikirim jika jumlah pilihan tidak sesuai.</p>
+    <p class="section-desc">Tambahkan posisi/jabatan yang dipilih beserta calonnya. Untuk posisi seperti formatur, atur jumlah calon yang wajib dipilih peserta (mis. 1, 3, 5, 7 ...). Suara tidak dapat dikirim jika jumlah pilihan tidak sesuai. Foto calon (opsional) bisa diunggah dengan tombol 📷 Foto dan otomatis dikecilkan.</p>
     <div id="pos-list"></div>
     <button class="btn btn-outline" id="add-pos-btn">+ Tambah Posisi</button>
   `;
@@ -583,8 +649,15 @@ function renderAdminSetup(main, cfg){
         </div>
         ${pos.candidates.map(c => `
           <div class="cand-chip">
-            <span>${escapeHtml(c.name)}</span>
-            <button class="btn btn-ghost btn-sm" data-action="del-cand" data-pos="${pos.id}" data-cand="${c.id}">✕</button>
+            <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+              <div class="thumb" data-thumb="${c.id}" style="background:${avatarColor(c.name)};">${initials(c.name)}</div>
+              <span>${escapeHtml(c.name)}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+              <label class="btn btn-outline btn-sm" style="cursor:pointer;">📷 Foto<input type="file" accept="image/*" hidden data-action="upload-photo" data-cand="${c.id}"></label>
+              <button class="btn btn-ghost btn-sm" data-action="del-photo" data-cand="${c.id}" style="display:none;">Hapus foto</button>
+              <button class="btn btn-ghost btn-sm" data-action="del-cand" data-pos="${pos.id}" data-cand="${c.id}">✕</button>
+            </div>
           </div>
         `).join('')}
         <div style="display:flex;gap:8px;margin-top:8px;">
@@ -593,6 +666,26 @@ function renderAdminSetup(main, cfg){
         </div>
       </div>
     `).join('');
+
+    list.querySelectorAll('[data-action="upload-photo"]').forEach(inp => {
+      inp.onchange = async () => {
+        const f = inp.files[0];
+        if(!f) return;
+        try{
+          const dataUrl = await resizeImage(f, 320);
+          await savePhoto(inp.dataset.cand, dataUrl);
+          drawPositions();
+        }catch(e){
+          console.error(e);
+          alert('Foto gagal diunggah. Pastikan file berupa gambar (JPG/PNG) dan koneksi stabil.');
+        }
+        inp.value = '';
+      };
+    });
+    list.querySelectorAll('[data-action="del-photo"]').forEach(btn => {
+      btn.onclick = async () => { await deletePhoto(btn.dataset.cand); drawPositions(); };
+    });
+    hydrateThumbs(list);
 
     list.querySelectorAll('[data-field="posname"]').forEach(inp => {
       inp.onchange = async () => {
@@ -611,6 +704,8 @@ function renderAdminSetup(main, cfg){
     list.querySelectorAll('[data-action="del-pos"]').forEach(btn => {
       btn.onclick = async () => {
         if(!confirm('Hapus posisi ini beserta semua calonnya?')) return;
+        const gone = cfg.positions.find(p=>p.id===btn.dataset.pos);
+        if(gone){ for(const c of gone.candidates) await deletePhoto(c.id); }
         cfg.positions = cfg.positions.filter(p=>p.id!==btn.dataset.pos);
         await saveConfig(cfg); drawPositions();
       };
@@ -618,6 +713,7 @@ function renderAdminSetup(main, cfg){
     list.querySelectorAll('[data-action="del-cand"]').forEach(btn => {
       btn.onclick = async () => {
         const pos = cfg.positions.find(p=>p.id===btn.dataset.pos);
+        await deletePhoto(btn.dataset.cand);
         pos.candidates = pos.candidates.filter(c=>c.id!==btn.dataset.cand);
         if(pos.requiredPicks > Math.max(pos.candidates.length,1) ) pos.requiredPicks = 1;
         await saveConfig(cfg); drawPositions();
@@ -1133,14 +1229,15 @@ async function renderBallot(app){
     </div>
     <div class="ballot-wrap">
       <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%;"></div></div>
-      <p class="muted" id="progress-label" style="font-size:13px;margin-top:-16px;margin-bottom:24px;">0 dari ${cfg.positions.length} posisi terisi</p>
+      <p class="muted" id="progress-label" style="font-size:13px;margin-top:-16px;margin-bottom:6px;">0 dari ${cfg.positions.length} posisi terisi</p>
+      <p class="muted" id="photo-hint" style="font-size:12.5px;margin:0 0 20px;display:none;">Ketuk foto calon untuk memperbesar.</p>
       ${cfg.positions.map((pos, idx) => `
         <div class="panel">
           <h3>${idx+1}. ${escapeHtml(pos.name)}</h3>
           <div class="pick-hint" data-hint="${pos.id}">Pilih tepat ${pos.requiredPicks} calon (0/${pos.requiredPicks})</div>
           ${pos.candidates.map(c => `
             <div class="candidate-card" data-pos="${pos.id}" data-cand="${c.id}" data-multi="${pos.requiredPicks>1?'1':'0'}">
-              <div class="avatar" style="background:${avatarColor(c.name)};">${initials(c.name)}</div>
+              <div class="thumb big" data-thumb="${c.id}" style="background:${avatarColor(c.name)};">${initials(c.name)}</div>
               <div class="name">${escapeHtml(c.name)}</div>
               <div class="check-circle ${pos.requiredPicks>1?'square':'round'}"></div>
             </div>
@@ -1199,6 +1296,27 @@ async function renderBallot(app){
     };
   });
   updateProgress();
+
+  // muat foto calon (tampil menyusul; sementara memakai inisial)
+  (async () => {
+    const root = document.querySelector('.ballot-wrap');
+    const ids = [...new Set([...root.querySelectorAll('[data-thumb]')].map(e => e.dataset.thumb))];
+    await loadPhotos(ids);
+    let any = false;
+    root.querySelectorAll('[data-thumb]').forEach(el => {
+      const d = photoCache[el.dataset.thumb];
+      if(!d) return;
+      any = true;
+      el.innerHTML = `<img src="${d}" alt="">`;
+      el.classList.add('zoomable');
+      el.onclick = (e) => {
+        e.stopPropagation();
+        const nm = el.closest('.candidate-card').querySelector('.name').textContent;
+        openLightbox(d, nm);
+      };
+    });
+    if(any) document.getElementById('photo-hint').style.display = 'block';
+  })();
 
   document.getElementById('submit-vote-btn').onclick = async () => {
     const incomplete = cfg.positions.some(pos => selections[pos.id].length !== pos.requiredPicks);
