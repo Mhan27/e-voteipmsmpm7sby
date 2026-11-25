@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
 <title>e-Voting — Musyawarah Ranting IPM</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700;9..144,800&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap');
@@ -487,17 +488,25 @@ function renderAdminLogin(app){
     const pass = document.getElementById('admin-pass').value;
     const btn = document.getElementById('admin-login-btn');
     btn.disabled = true;
+    const errBox = document.getElementById('admin-login-error');
+    errBox.innerHTML = '';
     try{
       await signInWithEmailAndPassword(auth, email, pass);
-      session.adminAuthed = true;
-      await ensureConfig();
-      go('/admin/hasil');
     }catch(e){
       console.error(e);
-      document.getElementById('admin-login-error').innerHTML =
-        `<div class="alert alert-error">Email atau kata sandi salah. Coba lagi.</div>`;
-      btn.disabled = false;
+      errBox.innerHTML = `<div class="alert alert-error">Email atau kata sandi salah. Coba lagi.</div>`;
+      btn.disabled = false; return;
     }
+    try{
+      await ensureConfig();
+    }catch(e){
+      console.error(e);
+      try{ await signOut(auth); }catch(_){}
+      errBox.innerHTML = `<div class="alert alert-error">Akun ini tidak memiliki akses admin. Pastikan email admin di firestore.rules sudah benar dan rules sudah di-Publish.</div>`;
+      btn.disabled = false; return;
+    }
+    session.adminAuthed = true;
+    go('/admin/hasil');
   };
   document.getElementById('admin-login-btn').onclick = doLogin;
   document.getElementById('admin-pass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
@@ -708,22 +717,42 @@ async function renderAdminToken(main, cfg){
 }
 
 /* ---------- Laporan tab ---------- */
+/* Hitung suara. Suara yang tidak wajar (pilihan melebihi kuota / ganda, mis. hasil
+   manipulasi lewat console) diabaikan untuk posisi tersebut. */
+function tallyVotes(cfg, votes){
+  const tally = {}, totalVoters = {};
+  cfg.positions.forEach(p => { tally[p.id] = {}; p.candidates.forEach(c => tally[p.id][c.id] = 0); totalVoters[p.id] = 0; });
+  votes.forEach(v => {
+    const pv = (v && v.positionVotes) || {};
+    cfg.positions.forEach(pos => {
+      const raw = pv[pos.id];
+      const arr = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+      if(arr.length === 0) return;
+      const uniq = [...new Set(arr)];
+      if(arr.length > pos.requiredPicks || uniq.length !== arr.length) return;
+      totalVoters[pos.id]++;
+      uniq.forEach(id => { if(id in tally[pos.id]) tally[pos.id][id]++; });
+    });
+  });
+  return { tally, totalVoters };
+}
+
+function checkReadyToOpen(cfg){
+  if(!cfg.positions.length) return 'Belum ada posisi pemilihan. Tambahkan posisi dan calon di tab Setup Pemilihan.';
+  for(const pos of cfg.positions){
+    if(pos.candidates.length < pos.requiredPicks || pos.candidates.length === 0){
+      return `Posisi "${pos.name}" belum memiliki calon yang cukup (minimal ${pos.requiredPicks} calon).`;
+    }
+  }
+  return null;
+}
+
 async function computeResults(cfg){
   const tokens = await loadTokens();
   const votes = await loadAllVotes();
   const voteTokens = votes;
 
-  const tally = {}; const totalVoters = {};
-  cfg.positions.forEach(p => { tally[p.id] = {}; p.candidates.forEach(c => tally[p.id][c.id] = 0); totalVoters[p.id]=0; });
-  votes.forEach(v => {
-    if(!v) return;
-    Object.entries(v.positionVotes || {}).forEach(([posId, candIds]) => {
-      if(!tally[posId]) return;
-      const arr = Array.isArray(candIds) ? candIds : [candIds];
-      totalVoters[posId]++;
-      arr.forEach(candId => { if(candId in tally[posId]) tally[posId][candId]++; });
-    });
-  });
+  const { tally, totalVoters } = tallyVotes(cfg, votes);
 
   const positions = cfg.positions.map(pos => {
     const t = tally[pos.id] || {};
@@ -752,7 +781,8 @@ function infoRowHtml(label, value, line){
   </tr>`;
 }
 
-function reportBodyHTML(meta, cfg, results){
+function reportBodyHTML(meta, cfg, results, forWord){
+  const logoSrc = forWord ? 'file:///C:/logo_panlih.png' : LOGO_ICON_SRC;
   const green='#067344', line='#CBD5C4', greenBg='#DFF0E6', dark='#181818';
 
   const positionsHtml = results.positions.map((pos, i) => {
@@ -789,7 +819,7 @@ function reportBodyHTML(meta, cfg, results){
   <div style="font-family:Calibri,Arial,sans-serif;color:${dark};max-width:760px;margin:0 auto;">
     <table style="width:100%;border-collapse:collapse;margin-bottom:6px;">
       <tr>
-        <td style="width:76px;vertical-align:middle;"><img src="${LOGO_ICON_SRC}" style="width:62px;height:62px;"></td>
+        <td style="width:76px;vertical-align:middle;"><img src="${logoSrc}" width="62" height="62" style="width:62px;height:62px;"></td>
         <td style="vertical-align:middle;">
           <div style="font-weight:700;font-size:13px;">PANITIA PEMILIHAN RANTING (PANLIH)</div>
           <div style="font-weight:700;font-size:13px;">MUSYAWARAH RANTING IKATAN PELAJAR MUHAMMADIYAH (MUSYRAN)</div>
@@ -836,13 +866,42 @@ function reportBodyHTML(meta, cfg, results){
 }
 
 function downloadWordDoc(filename, bodyHtml){
-  const pre = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-  <head><meta charset='utf-8'><title>Laporan</title>
-  <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->
-  </head><body>`;
-  const post = `</body></html>`;
-  const html = pre + bodyHtml + post;
-  const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+  // Format MHTML: gambar logo dilampirkan sebagai bagian MIME agar tampil di Microsoft Word
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>Laporan Hasil Pemilihan</title>
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->
+<style>
+@page WordSection1{size:595.3pt 841.9pt;margin:56.7pt 56.7pt 56.7pt 56.7pt;}
+div.WordSection1{page:WordSection1;}
+body{font-family:Calibri,Arial,sans-serif;}
+</style></head>
+<body><div class="WordSection1">${bodyHtml}</div></body></html>`;
+  const wrap = s => s.replace(/(.{76})/g, '$1\r\n');
+  const htmlB64 = wrap(btoa(unescape(encodeURIComponent(html))));
+  const imgB64 = wrap(LOGO_ICON_SRC.split(',')[1]);
+  const B = '----=_NextPart_ipm_report_001';
+  const mht = [
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/related; type="text/html"; boundary="${B}"`,
+    '',
+    `--${B}`,
+    'Content-Location: file:///C:/laporan.htm',
+    'Content-Transfer-Encoding: base64',
+    'Content-Type: text/html; charset="utf-8"',
+    '',
+    htmlB64,
+    '',
+    `--${B}`,
+    'Content-Location: file:///C:/logo_panlih.png',
+    'Content-Transfer-Encoding: base64',
+    'Content-Type: image/png',
+    '',
+    imgB64,
+    '',
+    `--${B}--`,
+    ''
+  ].join('\r\n');
+  const blob = new Blob([mht], { type: 'application/msword' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
@@ -909,7 +968,7 @@ async function renderAdminLaporan(main, cfg){
   document.getElementById('download-doc-btn').onclick = async () => {
     const m = getReportMetaFromForm();
     const freshResults = await computeResults(cfg);
-    const body = reportBodyHTML(m, cfg, freshResults);
+    const body = reportBodyHTML(m, cfg, freshResults, true);
     const safeName = (cfg.eventName||'Laporan_Pemilihan').replace(/[^a-z0-9]+/gi,'_').slice(0,60);
     downloadWordDoc(`Laporan_Hasil_Pemilihan_${safeName}.doc`, body);
   };
@@ -933,7 +992,7 @@ window.addEventListener('afterprint', () => {
 function renderAdminSettings(main, cfg){
   main.innerHTML = `
     <h2 class="section-title">Pengaturan</h2>
-    <p class="section-desc">Atur status pemilihan, identitas acara, dan kata sandi admin.</p>
+    <p class="section-desc">Atur status pemilihan dan identitas acara.</p>
 
     <div class="panel">
       <h3>Status Pemilihan</h3>
@@ -972,6 +1031,10 @@ function renderAdminSettings(main, cfg){
   `;
 
   document.getElementById('voting-switch').onclick = async () => {
+    if(!cfg.votingOpen){
+      const problem = checkReadyToOpen(cfg);
+      if(problem){ alert(problem); return; }
+    }
     cfg.votingOpen = !cfg.votingOpen;
     await saveConfig(cfg);
     renderAdminSettings(main, cfg);
@@ -998,24 +1061,13 @@ async function renderAdminResults(main, cfg){
   const votes = await loadAllVotes();
   const voteTokens = votes;
 
-  const tally = {};
-  const totalVoters = {};
-  cfg.positions.forEach(p => { tally[p.id] = {}; p.candidates.forEach(c => tally[p.id][c.id] = 0); totalVoters[p.id]=0; });
-  votes.forEach(v => {
-    if(!v) return;
-    Object.entries(v.positionVotes || {}).forEach(([posId, candIds]) => {
-      if(!tally[posId]) return;
-      const arr = Array.isArray(candIds) ? candIds : [candIds];
-      totalVoters[posId]++;
-      arr.forEach(candId => { if(candId in tally[posId]) tally[posId][candId]++; });
-    });
-  });
+  const { tally, totalVoters } = tallyVotes(cfg, votes);
 
   main.innerHTML = `
     <div class="row-between" style="margin-bottom:6px;">
       <div>
         <h2 class="section-title" style="margin-bottom:2px;">Hasil Pemilihan</h2>
-        <p class="section-desc" style="margin-bottom:0;">Diperbarui otomatis dari suara yang masuk secara real-time.</p>
+        <p class="section-desc" style="margin-bottom:0;">Klik Segarkan untuk memuat suara terbaru yang masuk.</p>
       </div>
       <button class="btn btn-ghost btn-sm" id="refresh-btn">↻ Segarkan</button>
     </div>
@@ -1062,7 +1114,7 @@ async function renderBallot(app){
   const cfg = await loadConfig();
   const token = session.voterToken;
 
-  if(!cfg.votingOpen || cfg.positions.length===0){
+  if(!cfg.votingOpen || checkReadyToOpen(cfg)){
     app.innerHTML = `<div class="centerwrap"><div class="card landing-card">
       <h1>Pemilihan Belum Tersedia</h1>
       <p class="sub">Silakan hubungi panitia atau coba lagi nanti.</p>
@@ -1155,6 +1207,7 @@ async function renderBallot(app){
     btn.disabled = true; btn.textContent = 'Mengirim...';
     try{
       await submitVote(token, selections);
+      session.voterToken = null;
       go('/vote/done');
     }catch(e){
       console.error(e);
