@@ -133,28 +133,39 @@ table.simple th{text-align:left;font-size:11.5px;text-transform:uppercase;letter
 table.simple td{padding:9px 10px;border-bottom:1px solid #EEF2EB;}
 table.simple tr:last-child td{border-bottom:none;}
 
-.ballot-wrap{max-width:720px;margin:0 auto;padding:26px 18px 110px;}
+.ballot-wrap{max-width:880px;margin:0 auto;padding:26px 18px 110px;}
 .progress-track{height:6px;background:var(--line);border-radius:99px;overflow:hidden;margin-bottom:26px;}
 .progress-fill{height:100%;background:var(--gold);transition:width .3s ease;}
 .pick-hint{font-size:12.5px;font-weight:700;color:var(--gold-ink);background:var(--gold-soft);display:inline-block;padding:3px 10px;border-radius:999px;margin-bottom:12px;}
+.cand-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;}
 .candidate-card{
-  border:1.5px solid var(--line);border-radius:16px;padding:15px 16px;margin-bottom:10px;
-  display:flex;align-items:center;gap:14px;background:var(--paper);transition:all .15s ease;
+  border:1.5px solid var(--line);border-radius:12px;padding:0;overflow:hidden;
+  display:flex;flex-direction:column;background:var(--paper);transition:all .15s ease;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;user-select:none;
 }
+.cand-photo{position:relative;height:200px;background:#fff;padding:10px 10px 0;}
+.cand-img{width:100%;height:100%;display:flex;align-items:center;justify-content:center;}
+.cand-img img{height:100%;width:auto;max-width:100%;object-fit:contain;display:block;}
+.cand-initials{width:96px;height:96px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:30px;}
+.cand-no{position:absolute;top:8px;left:10px;background:var(--paper);border:1.5px solid var(--line);border-radius:8px;padding:1px 8px;font-weight:800;font-size:13px;color:var(--green-deep);z-index:2;}
+.zoom-btn{position:absolute;top:8px;right:10px;width:32px;height:32px;border-radius:50%;border:1.5px solid var(--line);background:rgba(255,255,255,.95);font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;z-index:2;}
+.zoom-btn:hover{border-color:var(--green-mid);}
+.cand-foot{display:flex;align-items:center;gap:10px;padding:12px 12px;border-top:1px solid var(--line);}
 .candidate-card:hover{border-color:var(--green-mid);}
 .candidate-card.selected{border-color:var(--green-deep);background:var(--green-soft);box-shadow:0 0 0 3px rgba(31,122,77,.12);}
 .candidate-card.disabled{opacity:.45;}
-.candidate-card .name{font-weight:700;font-size:15px;flex:1;}
+.candidate-card .name{font-weight:600;font-size:14px;line-height:1.3;flex:1;min-width:0;word-break:break-word;}
 .check-circle{width:22px;height:22px;border:2px solid var(--line);flex-shrink:0;position:relative;}
 .check-circle.round{border-radius:50%;}
 .check-circle.square{border-radius:6px;}
 .candidate-card.selected .check-circle{border-color:var(--green-deep);background:var(--green-deep);}
 .candidate-card.selected .check-circle::after{content:'';position:absolute;inset:5px;border-radius:inherit;background:#fff;}
+.candidate-card.selected .check-circle.square::after{inset:auto;left:6px;top:2px;width:6px;height:12px;border:solid #fff;border-width:0 2.5px 2.5px 0;border-radius:0;background:none;transform:rotate(45deg);}
 .submit-bar{
   position:fixed;bottom:0;left:0;right:0;background:var(--paper);border-top:1px solid var(--line);
   padding:14px 20px;display:flex;justify-content:center;box-shadow:0 -8px 24px rgba(0,0,0,.06);z-index:30;
 }
-.submit-bar .inner{width:100%;max-width:720px;display:flex;align-items:center;justify-content:space-between;gap:14px;}
+.submit-bar .inner{width:100%;max-width:880px;display:flex;align-items:center;justify-content:space-between;gap:14px;}
 
 .bar-row{margin-bottom:12px;}
 .bar-row .bar-top{display:flex;justify-content:space-between;font-size:13.5px;margin-bottom:5px;}
@@ -192,6 +203,9 @@ table.simple tr:last-child td{border-bottom:none;}
 }
 
 @media (max-width:760px){
+  .cand-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+  .cand-photo{height:158px;}
+  .cand-initials{width:76px;height:76px;font-size:24px;}
   .admin-shell{grid-template-columns:1fr;}
   .sidebar{display:flex;overflow-x:auto;border-right:none;border-bottom:1px solid var(--line);padding:12px;gap:6px;}
   .navitem{white-space:nowrap;margin-bottom:0;}
@@ -1230,18 +1244,26 @@ async function renderBallot(app){
     <div class="ballot-wrap">
       <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%;"></div></div>
       <p class="muted" id="progress-label" style="font-size:13px;margin-top:-16px;margin-bottom:6px;">0 dari ${cfg.positions.length} posisi terisi</p>
-      <p class="muted" id="photo-hint" style="font-size:12.5px;margin:0 0 20px;display:none;">Ketuk foto calon untuk memperbesar.</p>
+      <p class="muted" id="photo-hint" style="font-size:12.5px;margin:0 0 20px;display:none;">Ketuk ikon 🔍 pada foto untuk memperbesar. Ketuk kartu untuk memilih.</p>
       ${cfg.positions.map((pos, idx) => `
         <div class="panel">
           <h3>${idx+1}. ${escapeHtml(pos.name)}</h3>
           <div class="pick-hint" data-hint="${pos.id}">Pilih tepat ${pos.requiredPicks} calon (0/${pos.requiredPicks})</div>
-          ${pos.candidates.map(c => `
+          <div class="cand-grid">
+          ${pos.candidates.map((c, ci) => `
             <div class="candidate-card" data-pos="${pos.id}" data-cand="${c.id}" data-multi="${pos.requiredPicks>1?'1':'0'}">
-              <div class="thumb big" data-thumb="${c.id}" style="background:${avatarColor(c.name)};">${initials(c.name)}</div>
-              <div class="name">${escapeHtml(c.name)}</div>
-              <div class="check-circle ${pos.requiredPicks>1?'square':'round'}"></div>
+              <div class="cand-photo">
+                <div class="cand-img" data-thumb="${c.id}"><span class="cand-initials" style="background:${avatarColor(c.name)};">${initials(c.name)}</span></div>
+                <span class="cand-no">${String(ci+1).padStart(2,'0')}</span>
+                <button type="button" class="zoom-btn" style="display:none;" aria-label="Perbesar foto">🔍</button>
+              </div>
+              <div class="cand-foot">
+                <div class="check-circle ${pos.requiredPicks>1?'square':'round'}"></div>
+                <div class="name">${escapeHtml(c.name)}</div>
+              </div>
             </div>
           `).join('')}
+          </div>
         </div>
       `).join('')}
     </div>
@@ -1308,12 +1330,15 @@ async function renderBallot(app){
       if(!d) return;
       any = true;
       el.innerHTML = `<img src="${d}" alt="">`;
-      el.classList.add('zoomable');
-      el.onclick = (e) => {
-        e.stopPropagation();
-        const nm = el.closest('.candidate-card').querySelector('.name').textContent;
-        openLightbox(d, nm);
-      };
+      const zb = el.parentElement.querySelector('.zoom-btn');
+      if(zb){
+        zb.style.display = '';
+        zb.onclick = (e) => {
+          e.stopPropagation();
+          const nm = el.closest('.candidate-card').querySelector('.name').textContent;
+          openLightbox(d, nm);
+        };
+      }
     });
     if(any) document.getElementById('photo-hint').style.display = 'block';
   })();
