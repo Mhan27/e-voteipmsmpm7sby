@@ -196,6 +196,32 @@ table.simple tr:last-child td{border-bottom:none;}
 .lightbox img{max-width:min(86vw,440px);max-height:68vh;border-radius:22px;background:#fff;display:block;margin:0 auto;}
 .lightbox .lb-name{color:#fff;font-weight:700;font-size:17px;margin-top:14px;}
 .lightbox .lb-hint{color:#d6d6d6;font-size:12px;margin-top:4px;}
+/* ---- Hasil (live) ---- */
+.main.wide{max-width:none;}
+.live-pill{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;background:var(--green-soft);color:var(--green-deep);font-size:12.5px;font-weight:700;white-space:nowrap;}
+.live-pill.err{background:var(--red-soft);color:var(--red);}
+.live-dot{width:9px;height:9px;border-radius:50%;background:currentColor;animation:livepulse 1.6s infinite;}
+@keyframes livepulse{0%{box-shadow:0 0 0 0 rgba(6,115,68,.5);}70%{box-shadow:0 0 0 8px rgba(6,115,68,0);}100%{box-shadow:0 0 0 0 rgba(6,115,68,0);}}
+.res-panel{padding:18px;}
+.res-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
+.res-head h3{margin:0;}
+.res-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:12px;}
+.res-card{border:1.5px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;display:flex;flex-direction:column;}
+.res-card.top{border-color:var(--green-deep);box-shadow:0 0 0 3px rgba(6,115,68,.12);}
+.res-photo{position:relative;height:150px;background:#fff;padding:8px 8px 0;}
+.res-photo .cand-initials{width:72px;height:72px;font-size:22px;}
+.rank-chip{position:absolute;top:8px;right:8px;background:#eef1ea;color:#586b5d;border-radius:8px;padding:1px 8px;font-weight:800;font-size:12px;z-index:2;}
+.res-card.top .rank-chip{background:var(--green-deep);color:#fff;}
+.res-box{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);background:rgba(10,10,10,.88);color:#fff;border-radius:10px;padding:5px 12px;text-align:center;line-height:1.25;min-width:88px;z-index:2;}
+.res-box b{display:block;font-size:16px;}
+.res-box span{font-size:11.5px;opacity:.92;}
+.res-foot{position:relative;min-height:46px;display:flex;align-items:center;justify-content:center;padding:6px 10px;border-top:1px solid var(--line);background:#f6f7f4;overflow:hidden;}
+.res-fill{position:absolute;left:0;top:0;bottom:0;transition:width .6s ease;}
+.res-name{position:relative;font-size:12.5px;font-weight:600;text-align:center;line-height:1.25;}
+@media (max-width:1599px){.res-grid{grid-template-columns:repeat(6,minmax(0,1fr));}}
+@media (max-width:1299px){.res-grid{grid-template-columns:repeat(5,minmax(0,1fr));}}
+@media (max-width:999px){.res-grid{grid-template-columns:repeat(4,minmax(0,1fr));}}
+@media (max-width:760px){.res-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
 #print-report-root{display:none;}
 @media print{
   body.printing-report > *:not(#print-report-root){display:none !important;}
@@ -218,7 +244,7 @@ table.simple tr:last-child td{border-bottom:none;}
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, deleteDoc, getDocs, collection, query, orderBy, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot, getDocs, collection, query, orderBy, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 /* =========================================================
@@ -442,6 +468,7 @@ window.go = go;
    Root render
 ========================================================= */
 async function render(){
+  stopLive();
   const app = document.getElementById('app');
   const route = getRoute();
 
@@ -617,10 +644,10 @@ async function renderAdmin(app, route){
         <div class="navitem ${tab==='laporan'?'active':''}" data-tab="laporan">📄 Laporan</div>
         <div class="navitem ${tab==='pengaturan'?'active':''}" data-tab="pengaturan">⚙️ Pengaturan</div>
       </div>
-      <div class="main" id="admin-main"></div>
+      <div class="main${['setup','token','laporan','pengaturan'].includes(tab) ? '' : ' wide'}" id="admin-main"></div>
     </div>`;
 
-  document.getElementById('logout-btn').onclick = async () => { try{ await signOut(auth); }catch(e){} session.adminAuthed=false; go('/'); };
+  document.getElementById('logout-btn').onclick = async () => { stopLive(); try{ await signOut(auth); }catch(e){} session.adminAuthed=false; go('/'); };
   document.querySelectorAll('.navitem').forEach(el => {
     el.onclick = () => go('/admin/'+el.dataset.tab);
   });
@@ -1164,56 +1191,120 @@ function renderAdminSettings(main, cfg){
   };
 }
 
-/* ---------- Results tab ---------- */
+/* ---------- Results tab (LIVE via Firestore onSnapshot) ---------- */
+let liveUnsubs = [];
+function stopLive(){ liveUnsubs.forEach(u => { try{ u(); }catch(e){} }); liveUnsubs = []; }
+const RES_COLORS = ['#CFE9DA','#F9D3D3','#E3D7F1','#FDE7B8','#FCD9B6','#CDE6F5','#E6EDC9','#F3D1E4'];
+const fmtPct = n => (Math.round(n * 10) / 10).toFixed(1) + '%';
+
 async function renderAdminResults(main, cfg){
-  main.innerHTML = `<div class="center"><div class="spinner" style="margin:60px auto;"></div></div>`;
-  const tokens = await loadTokens();
-  const votes = await loadAllVotes();
-  const voteTokens = votes;
-
-  const { tally, totalVoters } = tallyVotes(cfg, votes);
-
+  stopLive();
   main.innerHTML = `
-    <div class="row-between" style="margin-bottom:6px;">
+    <div class="row-between" style="margin-bottom:12px;">
       <div>
         <h2 class="section-title" style="margin-bottom:2px;">Hasil Pemilihan</h2>
-        <p class="section-desc" style="margin-bottom:0;">Klik Segarkan untuk memuat suara terbaru yang masuk.</p>
+        <p class="section-desc" style="margin:0;">Tersinkron langsung saat peserta mengirim suara — tidak perlu menyegarkan halaman.</p>
       </div>
-      <button class="btn btn-ghost btn-sm" id="refresh-btn">↻ Segarkan</button>
+      <div class="live-pill" id="live-pill"><span class="live-dot"></span><span id="live-text">Menghubungkan…</span></div>
     </div>
-    <div class="flex-gap" style="margin-bottom:22px;">
-      <span class="badge">${tokens.length} token dibuat</span>
-      <span class="badge badge-gold">${voteTokens.length} suara masuk</span>
-      <span class="badge">${tokens.length ? Math.round((voteTokens.length/tokens.length)*100) : 0}% partisipasi</span>
-    </div>
-    ${cfg.positions.length===0 ? '<div class="empty">Belum ada posisi pemilihan. Buka tab "Setup Pemilihan" untuk menambahkannya.</div>' :
-      cfg.positions.map(pos => {
-        const t = tally[pos.id] || {};
-        const voters = totalVoters[pos.id] || 0;
-        const maxVotes = Math.max(0, ...Object.values(t));
-        return `
-        <div class="panel">
-          <h3>${escapeHtml(pos.name)} <span class="muted" style="font-weight:400;font-size:13px;">— dipilih ${voters} peserta · ${pos.requiredPicks} calon per suara</span></h3>
-          ${pos.candidates.length===0 ? '<div class="muted">Belum ada calon.</div>' :
-            pos.candidates.slice().sort((a,b)=>(t[b.id]||0)-(t[a.id]||0)).map(c => {
-              const v = t[c.id] || 0;
-              const pct = voters ? Math.round((v/voters)*100) : 0;
-              const isLeader = v>0 && v===maxVotes;
-              return `
-              <div class="bar-row">
-                <div class="bar-top">
-                  <span style="font-weight:600;">${escapeHtml(c.name)} ${isLeader?'🏵️':''}</span>
-                  <span class="muted">${v} suara · ${pct}%</span>
-                </div>
-                <div class="bar-track"><div class="bar-fill ${isLeader?'leader':''}" style="width:${pct}%;"></div></div>
-              </div>`;
-            }).join('')
-          }
-        </div>`;
-      }).join('')
-    }
-  `;
-  document.getElementById('refresh-btn').onclick = () => renderAdminResults(main, cfg);
+    <div class="flex-gap" style="margin-bottom:18px;" id="res-stats"></div>
+    <div id="res-sections"></div>`;
+
+  const sections = document.getElementById('res-sections');
+  if(cfg.positions.length === 0){
+    sections.innerHTML = '<div class="empty">Belum ada posisi pemilihan. Buka tab "Setup Pemilihan" untuk menambahkannya.</div>';
+    document.getElementById('live-text').textContent = 'Tidak ada data';
+    return;
+  }
+
+  // kerangka kartu (dibuat sekali; selanjutnya hanya diperbarui & diurutkan ulang)
+  const cardEls = {};
+  sections.innerHTML = cfg.positions.map(pos => `
+    <div class="panel res-panel">
+      <div class="res-head"><h3>${escapeHtml(pos.name)}</h3><span class="muted" style="font-size:13px;" id="resmeta-${pos.id}"></span></div>
+      <div class="res-grid" id="grid-${pos.id}"></div>
+    </div>`).join('');
+  cfg.positions.forEach(pos => {
+    const grid = document.getElementById('grid-' + pos.id);
+    pos.candidates.forEach((c, ci) => {
+      const el = document.createElement('div');
+      el.className = 'res-card';
+      el.innerHTML = `
+        <div class="res-photo">
+          <div class="cand-img" data-rthumb="${c.id}"><span class="cand-initials" style="background:${avatarColor(c.name)};">${initials(c.name)}</span></div>
+          <span class="cand-no">${String(ci + 1).padStart(2, '0')}</span>
+          <span class="rank-chip">#${ci + 1}</span>
+          <div class="res-box"><b class="r-pct">0.0%</b><span class="r-votes">(0 suara)</span></div>
+        </div>
+        <div class="res-foot"><div class="res-fill" style="background:${RES_COLORS[ci % RES_COLORS.length]};width:0%;"></div><span class="res-name">${escapeHtml(c.name)}</span></div>`;
+      cardEls[c.id] = el;
+      grid.appendChild(el);
+    });
+  });
+
+  // foto calon
+  const allIds = cfg.positions.flatMap(p => p.candidates.map(c => c.id));
+  loadPhotos(allIds).then(() => {
+    allIds.forEach(id => {
+      const d = photoCache[id], el = cardEls[id];
+      if(d && el) el.querySelector('[data-rthumb]').innerHTML = `<img src="${d}" alt="">`;
+    });
+  });
+
+  const state = { votes: null, tokens: null, offline: false };
+  const pill = document.getElementById('live-pill');
+  const liveText = document.getElementById('live-text');
+  const setLive = (ok, msg) => { pill.classList.toggle('err', !ok); liveText.textContent = msg; };
+
+  function update(){
+    if(state.votes === null) return;
+    const votes = state.votes;
+    const tokenCount = state.tokens === null ? 0 : state.tokens;
+    const { tally, totalVoters } = tallyVotes(cfg, votes);
+
+    document.getElementById('res-stats').innerHTML = `
+      <span class="badge">${tokenCount} token dibuat</span>
+      <span class="badge badge-gold">${votes.length} suara masuk</span>
+      <span class="badge">${tokenCount ? Math.round((votes.length / tokenCount) * 100) : 0}% partisipasi</span>`;
+
+    cfg.positions.forEach(pos => {
+      const t = tally[pos.id] || {};
+      const voters = totalVoters[pos.id] || 0;
+      const rows = pos.candidates.map((c, ci) => ({ c, ci, v: t[c.id] || 0 }))
+        .sort((a, b) => (b.v - a.v) || (a.ci - b.ci));
+      const max = rows.length ? rows[0].v : 0;
+      const grid = document.getElementById('grid-' + pos.id);
+      rows.forEach((r, rank) => {
+        const el = cardEls[r.c.id];
+        const pct = voters ? (r.v / voters) * 100 : 0;
+        el.querySelector('.r-pct').textContent = fmtPct(pct);
+        el.querySelector('.r-votes').textContent = `(${r.v} suara)`;
+        el.querySelector('.res-fill').style.width = (max ? (r.v / max) * 100 : 0) + '%';
+        el.querySelector('.rank-chip').textContent = '#' + (rank + 1);
+        el.classList.toggle('top', rank < pos.requiredPicks && r.v > 0);
+        grid.appendChild(el); // memindahkan ke urutan baru
+      });
+      const k = pos.requiredPicks;
+      const tie = k < rows.length && rows[k - 1].v > 0 && rows[k - 1].v === rows[k].v;
+      document.getElementById('resmeta-' + pos.id).innerHTML =
+        `${voters} peserta memilih · tiap suara memilih ${k} calon · ${k} peringkat teratas ditandai hijau` +
+        (tie ? ` · <b style="color:var(--red);">⚠ suara seri di batas peringkat ${k}</b>` : '');
+    });
+
+    const now = new Date().toLocaleTimeString('id-ID');
+    setLive(true, state.offline ? 'Offline — menunggu koneksi' : `Live · diperbarui ${now}`);
+  }
+
+  const onErr = (err) => { console.error(err); setLive(false, 'Terputus (' + (err.code || 'error') + ')'); };
+  liveUnsubs.push(onSnapshot(collection(db, 'votes'), snap => {
+    state.offline = snap.metadata && snap.metadata.fromCache;
+    state.votes = snap.docs.map(d => ({ token: d.id, ...d.data() }));
+    update();
+  }, onErr));
+  liveUnsubs.push(onSnapshot(collection(db, 'tokens'), snap => {
+    state.tokens = snap.docs.length;
+    update();
+  }, onErr));
 }
 
 /* =========================================================
