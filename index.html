@@ -98,7 +98,12 @@ select.input{cursor:pointer;}
 .status-closed{background:var(--red-soft);color:var(--red);}
 
 .admin-shell{display:grid;grid-template-columns:230px 1fr;min-height:calc(100vh - 61px);}
-.sidebar{background:var(--paper);border-right:1px solid var(--line);padding:22px 14px;}
+.sidebar{background:var(--paper);border-right:1px solid var(--line);padding:22px 14px;overflow:hidden;min-width:0;}
+.sidebar .navitem{white-space:nowrap;}
+.admin-shell{transition:grid-template-columns .25s ease;}
+.admin-shell.collapsed{grid-template-columns:0 1fr;}
+.admin-shell.collapsed .sidebar{padding-left:0;padding-right:0;border-right-width:0;visibility:hidden;}
+.icon-btn{padding:8px 12px;font-size:17px;line-height:1;}
 .navitem{
   display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:12px;font-size:14px;font-weight:600;
   color:#586b5d;margin-bottom:4px;transition:all .15s ease;
@@ -205,7 +210,7 @@ table.simple tr:last-child td{border-bottom:none;}
 .res-panel{padding:18px;}
 .res-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
 .res-head h3{margin:0;}
-.res-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:12px;}
+.res-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;}
 .res-card{border:1.5px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;display:flex;flex-direction:column;}
 .res-card.top{border-color:var(--green-deep);box-shadow:0 0 0 3px rgba(6,115,68,.12);}
 .res-photo{position:relative;height:150px;background:#fff;padding:8px 8px 0;}
@@ -218,9 +223,6 @@ table.simple tr:last-child td{border-bottom:none;}
 .res-foot{position:relative;min-height:46px;display:flex;align-items:center;justify-content:center;padding:6px 10px;border-top:1px solid var(--line);background:#f6f7f4;overflow:hidden;}
 .res-fill{position:absolute;left:0;top:0;bottom:0;transition:width .6s ease;}
 .res-name{position:relative;font-size:12.5px;font-weight:600;text-align:center;line-height:1.25;}
-@media (max-width:1599px){.res-grid{grid-template-columns:repeat(6,minmax(0,1fr));}}
-@media (max-width:1299px){.res-grid{grid-template-columns:repeat(5,minmax(0,1fr));}}
-@media (max-width:999px){.res-grid{grid-template-columns:repeat(4,minmax(0,1fr));}}
 @media (max-width:760px){.res-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
 #print-report-root{display:none;}
 @media print{
@@ -233,6 +235,8 @@ table.simple tr:last-child td{border-bottom:none;}
   .cand-photo{height:158px;}
   .cand-initials{width:76px;height:76px;font-size:24px;}
   .admin-shell{grid-template-columns:1fr;}
+  .admin-shell.collapsed{grid-template-columns:1fr;}
+  .admin-shell.collapsed .sidebar{display:none;}
   .sidebar{display:flex;overflow-x:auto;border-right:none;border-bottom:1px solid var(--line);padding:12px;gap:6px;}
   .navitem{white-space:nowrap;margin-bottom:0;}
   .main{padding:20px 16px;}
@@ -622,13 +626,17 @@ function renderAdminLogin(app){
 /* =========================================================
    Admin — shell + tabs
 ========================================================= */
+function getSidebarCollapsed(){ try{ return localStorage.getItem('ipm_sidebar') === '1'; }catch(e){ return false; } }
+function setSidebarCollapsed(v){ try{ localStorage.setItem('ipm_sidebar', v ? '1' : '0'); }catch(e){} }
+
 async function renderAdmin(app, route){
   const cfg = await loadConfig();
   const tab = route.split('/')[2] || 'hasil';
+  const collapsed = getSidebarCollapsed();
 
   app.innerHTML = `
     <div class="topbar">
-      <div class="brand">${logoImg(32,'icon')}<b>Panel Admin</b></div>
+      <div class="brand"><button type="button" class="btn btn-ghost icon-btn" id="sidebar-toggle" aria-label="Tutup atau buka menu" aria-expanded="${!collapsed}" title="Tutup / buka menu">☰</button>${logoImg(32,'icon')}<b>Panel Admin</b></div>
       <div class="flex-gap" style="align-items:center;">
         <span class="status-pill ${cfg.votingOpen?'status-open':'status-closed'}">
           <span class="dot" style="background:currentColor;"></span> ${cfg.votingOpen ? 'Pemilihan Dibuka' : 'Pemilihan Ditutup'}
@@ -636,7 +644,7 @@ async function renderAdmin(app, route){
         <button class="btn btn-ghost btn-sm" id="logout-btn">Keluar</button>
       </div>
     </div>
-    <div class="admin-shell">
+    <div class="admin-shell${collapsed ? ' collapsed' : ''}" id="admin-shell">
       <div class="sidebar">
         <div class="navitem ${tab==='hasil'?'active':''}" data-tab="hasil">📊 Hasil</div>
         <div class="navitem ${tab==='setup'?'active':''}" data-tab="setup">🗳️ Setup Pemilihan</div>
@@ -648,6 +656,11 @@ async function renderAdmin(app, route){
     </div>`;
 
   document.getElementById('logout-btn').onclick = async () => { stopLive(); try{ await signOut(auth); }catch(e){} session.adminAuthed=false; go('/'); };
+  document.getElementById('sidebar-toggle').onclick = () => {
+    const c = document.getElementById('admin-shell').classList.toggle('collapsed');
+    setSidebarCollapsed(c);
+    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', String(!c));
+  };
   document.querySelectorAll('.navitem').forEach(el => {
     el.onclick = () => go('/admin/'+el.dataset.tab);
   });
